@@ -1,0 +1,6 @@
+# Namespace dédié à l'application : toutes nos ressources Kubernetes sont rangées dedans
+# (kubectl get all -n bibliotheque), et on peut tout supprimer d'un coup.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bibliotheque

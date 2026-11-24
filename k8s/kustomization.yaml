@@ -1,0 +1,19 @@
+# Point d'entrée Kustomize : `kubectl apply -k k8s/` déploie toute l'application.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - book-service.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bibliotheque
+    includeSelectors: false
+
+# Image publiée sur Docker Hub : remplacez "votre-pseudo" par votre identifiant Docker Hub
+# (scripts/deploy.sh le fait automatiquement à partir de la variable DOCKERHUB_USER).
+images:
+  - name: bibliotheque-book-service
+    newName: docker.io/votre-pseudo/bibliotheque-book-service
+    newTag: "1.0.0"

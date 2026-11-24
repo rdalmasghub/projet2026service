@@ -1,0 +1,98 @@
+# book-service dans Kubernetes :
+# - un Deployment : le pod est recréé automatiquement s'il tombe, et mis à jour sans coupure
+# - un Service : une adresse stable qui répartit les requêtes entre les pods
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: book-service
+  namespace: bibliotheque
+  labels:
+    app: book-service
+spec:
+  # 1 seul réplica tant que la base est en mémoire : chaque pod aurait sa PROPRE base H2,
+  # un livre créé sur un pod n'existerait pas sur l'autre (essayez kubectl scale --replicas=2).
+  # On passera à plusieurs réplicas quand la base PostgreSQL sera partagée (étape base de données).
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: book-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # mise à jour sans interruption de service
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: book-service
+    spec:
+      automountServiceAccountToken: false   # le service n'a pas besoin de parler à l'API Kubernetes
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: book-service
+          image: bibliotheque-book-service       # remplacé par kustomization.yaml (images:)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          # Sondes : Kubernetes n'envoie du trafic qu'aux pods prêts, et redémarre ceux qui sont bloqués
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36       # jusqu'à 3 min pour démarrer (petites machines)
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 320Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp                # seul dossier inscriptible (fichiers temporaires de Tomcat)
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: book-service
+  namespace: bibliotheque
+  labels:
+    app: book-service
+spec:
+  # NodePort : le service est joignable depuis l'extérieur du cluster sur le port 30080 des nœuds.
+  # (À l'étape suivante, une gateway deviendra le seul point d'entrée.)
+  type: NodePort
+  selector:
+    app: book-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080

@@ -1,0 +1,16 @@
+# Secrets locaux : ne jamais commiter
+.env
+*.kubeconfig
+*.key
+*.pem
+
+# Builds
+build/
+.gradle/
+bin/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
