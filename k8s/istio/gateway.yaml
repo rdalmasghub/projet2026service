@@ -1,0 +1,46 @@
+# Gateway Istio : le point d'entrée unique de l'application depuis l'extérieur du cluster.
+#
+# - Gateway        : ouvre le port 80 sur le pod istio-ingressgateway (dans le namespace istio-system)
+# - VirtualService : règles de routage. Les URL /api/books vont vers le Service book-service.
+#                    Tout le reste (dont /actuator) n'est pas routé -> 404 : les endpoints
+#                    techniques ne sont pas exposés à l'extérieur.
+# Quand on ajoutera d'autres services, il suffira d'ajouter une règle par préfixe d'URL.
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: bibliotheque-gateway
+  namespace: bibliotheque
+spec:
+  selector:
+    istio: ingressgateway        # le pod gateway installé par Istio
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts: ["*"]
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: bibliotheque-routes
+  namespace: bibliotheque
+spec:
+  hosts: ["*"]
+  gateways: ["bibliotheque-gateway"]
+  http:
+    - name: api-books
+      match:
+        - uri:
+            prefix: /api/books
+      route:
+        - destination:
+            host: book-service           # nom du Service Kubernetes
+            port:
+              number: 8080
+      timeout: 10s                       # au-delà, la gateway répond 504 au lieu d'attendre indéfiniment
+      retries:
+        attempts: 2
+        perTryTimeout: 4s
+        retryOn: connect-failure,refused-stream,unavailable   # uniquement des erreurs sans effet de bord

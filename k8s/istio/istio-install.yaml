@@ -1,0 +1,51 @@
+# Configuration d'installation d'Istio (utilisée par scripts/install-istio.sh) :
+#   istioctl install -f k8s/istio/istio-install.yaml -y
+#
+# - profil "default" : istiod (plan de contrôle : configure tous les proxies Envoy)
+#                      + istio-ingressgateway (point d'entrée du cluster)
+# - ressources réduites : adapté à un minikube sur un portable
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: bibliotheque
+  namespace: istio-system
+spec:
+  profile: default
+  meshConfig:
+    accessLogFile: /dev/stdout          # logs d'accès Envoy : kubectl logs <pod> -c istio-proxy
+  components:
+    pilot:
+      k8s:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          service:
+            type: LoadBalancer          # minikube : lancer `minikube tunnel` ; sinon port-forward
+            ports:
+              - name: http2
+                port: 80
+                targetPort: 8080
+  values:
+    global:
+      proxy:
+        resources:
+          requests:
+            cpu: 30m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+    pilot:
+      autoscaleEnabled: false
+    gateways:
+      istio-ingressgateway:
+        autoscaleEnabled: false

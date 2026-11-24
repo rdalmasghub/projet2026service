@@ -1,0 +1,26 @@
+# DestinationRule : comment les proxies Envoy envoient le trafic vers les pods de book-service.
+# - LEAST_REQUEST   : chaque requête va au pod le moins occupé
+# - connectionPool  : limite le nombre de connexions / requêtes en attente
+# - outlierDetection ("circuit breaker") : un pod qui renvoie 5 erreurs 5xx d'affilée est
+#   écarté 30 s, le temps qu'il se rétablisse, au lieu de continuer à recevoir des requêtes.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: book-service
+  namespace: bibliotheque
+spec:
+  host: book-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 200
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 100

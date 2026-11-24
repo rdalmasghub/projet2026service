@@ -1,6 +1,12 @@
 # Namespace dédié à l'application : toutes nos ressources Kubernetes sont rangées dedans
 # (kubectl get all -n bibliotheque), et on peut tout supprimer d'un coup.
+#
+# istio-injection=enabled : Istio ajoute automatiquement un proxy Envoy ("sidecar") dans chaque
+# pod de ce namespace. Le pod passe de 1/1 à 2/2 conteneurs : l'application + istio-proxy.
+# Tout le trafic du pod passe par ce proxy -> routage, retries, métriques... sans toucher au code Java.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: bibliotheque
+  labels:
+    istio-injection: enabled

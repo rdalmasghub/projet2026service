@@ -1,6 +1,7 @@
 # book-service dans Kubernetes :
 # - un Deployment : le pod est recréé automatiquement s'il tombe, et mis à jour sans coupure
 # - un Service : une adresse stable qui répartit les requêtes entre les pods
+# Depuis l'étape « service mesh », il n'est plus exposé directement : on passe par la gateway Istio.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -27,6 +28,7 @@ spec:
     metadata:
       labels:
         app: book-service
+        version: v1          # utilisé par Istio et Kiali pour identifier la version du service
     spec:
       automountServiceAccountToken: false   # le service n'a pas besoin de parler à l'API Kubernetes
       securityContext:
@@ -86,13 +88,13 @@ metadata:
   labels:
     app: book-service
 spec:
-  # NodePort : le service est joignable depuis l'extérieur du cluster sur le port 30080 des nœuds.
-  # (À l'étape suivante, une gateway deviendra le seul point d'entrée.)
-  type: NodePort
+  # ClusterIP : joignable uniquement depuis l'intérieur du cluster.
+  # Le seul point d'entrée depuis l'extérieur est la gateway Istio (k8s/istio/gateway.yaml).
+  type: ClusterIP
   selector:
     app: book-service
   ports:
-    - name: http
+    - name: http             # le nom (ou appProtocol) indique à Istio que c'est du HTTP
       port: 8080
       targetPort: http
-      nodePort: 30080
+      appProtocol: http

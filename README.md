@@ -1,12 +1,14 @@
-# Bibliothèque : microservices sur Docker et Kubernetes
-Rémi Dalmas & Gonçalo DE SOUSA PIHNO 
+# Bibliothèque : microservices sur Docker, Kubernetes et Istio
+
+Rémi Dalmas & Gonçalo DE SOUSA PIHNO  
 LSI2APP
+
 Projet 2026 : application de gestion d'une bibliothèque, construite étape par étape en suivant le sujet.
 
 | Étape du sujet | État |
 |---|---|
-| **1. Commencer par un seul service en local (10/20)** | cette version |
-| 2. Ajouter une gateway en local, via un service mesh (12/20) | à venir |
+| **1. Commencer par un seul service en local (10/20)** | fait |
+| **2. Ajouter une gateway en local, via un service mesh (12/20)** | cette version |
 | 3. Ajouter un deuxième service et les relier (14/20), option gRPC | à venir |
 | 4. Ajouter une base de données (16/20) | à venir |
 | 5. Sécuriser le cluster (18/20) | à venir |
@@ -22,7 +24,7 @@ Le sujet demande, pour cette étape :
 | Créer une image Docker (Dockerfile) | Dockerfile multi-étapes, image Alpine, utilisateur non-root | `book-service/Dockerfile` |
 | Publier l'image sur le Docker Hub | Script de publication (connexion par access token) + CI GitHub Actions | `scripts/push-dockerhub.sh`, `.github/workflows/ci.yml` |
 | Créer un déploiement Kubernetes | Deployment avec sondes de santé, limites CPU/mémoire, mise à jour sans coupure, conteneur non-root en lecture seule | `k8s/book-service.yaml` |
-| Créer un service Kubernetes | Service NodePort (port 30080) qui répartit les requêtes entre les pods | `k8s/book-service.yaml` |
+| Créer un service Kubernetes | Service qui répartit les requêtes entre les pods (NodePort à l'étape 1, ClusterIP derrière la gateway depuis l'étape 2) | `k8s/book-service.yaml` |
 
 Chaque réponse contient l'en-tête `X-Served-By` avec le nom du pod qui a répondu.
 
@@ -30,6 +32,36 @@ Chaque réponse contient l'en-tête `X-Served-By` avec le nom du pod qui a répo
 chacun aurait sa propre base : un livre créé via le premier pod serait introuvable via le second.
 C'est la limite de la base en mémoire ; l'étape « base de données » (PostgreSQL partagé) permettra
 de passer à plusieurs réplicas.
+
+## Étape 2 : une gateway via le service mesh Istio
+
+```mermaid
+flowchart LR
+    U([Client]) -- "HTTP :80" --> GW
+    subgraph istio-system
+      GW[istio-ingressgateway<br/>Envoy]
+      ID[istiod<br/>configure les proxies]
+    end
+    subgraph bibliotheque["namespace bibliotheque (injection Istio)"]
+      subgraph pod["pod book-service (2/2)"]
+        P[istio-proxy<br/>Envoy] --> APP[book-service<br/>:8080]
+      end
+    end
+    GW -- "/api/books" --> P
+    ID -. config .-> GW
+    ID -. config .-> P
+```
+
+| Ajouté | Rôle | Où |
+|---|---|---|
+| Installation d'Istio | istiod (plan de contrôle) + istio-ingressgateway (point d'entrée du cluster) | `k8s/istio/istio-install.yaml`, `scripts/install-istio.sh` |
+| Injection automatique du sidecar | Chaque pod du namespace reçoit un proxy Envoy : il passe de 1/1 à 2/2 conteneurs | `k8s/namespace.yaml` (label `istio-injection: enabled`) |
+| Gateway | Ouvre le port 80 de la gateway Istio | `k8s/istio/gateway.yaml` |
+| VirtualService | Routage : `/api/books` → Service `book-service`, avec délai maximal (10 s) et nouvelles tentatives sur erreurs réseau. Le reste (dont `/actuator`) n'est pas exposé | `k8s/istio/gateway.yaml` |
+| DestinationRule | Répartition vers le pod le moins chargé, limite de connexions, éjection d'un pod défaillant (circuit breaker) | `k8s/istio/traffic.yaml` |
+| Service en ClusterIP | book-service n'est plus exposé directement (fini le NodePort) : la gateway est le seul point d'entrée | `k8s/book-service.yaml` |
+
+Rien n'a changé dans le code Java : toutes ces fonctionnalités sont apportées par le proxy Envoy.
 
 ---
 
@@ -41,6 +73,7 @@ de passer à plusieurs réplicas.
 | Docker Desktop (ou Docker Engine) | construire et lancer l'image | https://www.docker.com/get-started |
 | minikube | cluster Kubernetes local | https://minikube.sigs.k8s.io/docs/start/ |
 | kubectl | piloter Kubernetes | https://kubernetes.io/fr/docs/tasks/tools/ |
+| istioctl | installer Istio (téléchargé automatiquement par `scripts/install-istio.sh` s'il manque) | https://istio.io/latest/docs/setup/getting-started/ |
 | Un compte Docker Hub | publier l'image | https://hub.docker.com |
 
 Sous Windows, lancez les scripts `.sh` depuis **Git Bash** ou **WSL**.
@@ -85,10 +118,11 @@ dans une image finale légère (JRE Alpine), qui tourne avec un utilisateur sans
 
 Utilisez un **Personal Access Token** Docker Hub (Account settings > Personal access tokens) comme mot de passe.
 
-## 4. Déploiement Kubernetes (minikube)
+## 4. Déploiement Kubernetes + Istio (minikube)
 
 ```bash
-./scripts/cluster-minikube.sh      # minikube start
+./scripts/cluster-minikube.sh      # minikube start (4 CPU, 8 Go : Istio en a besoin)
+./scripts/install-istio.sh         # istioctl install -f k8s/istio/istio-install.yaml
 ./scripts/deploy.sh                # kubectl apply -k k8s/ avec votre image Docker Hub
 ```
 
@@ -98,20 +132,30 @@ Variante sans Docker Hub (image chargée directement dans minikube) :
 LOAD=minikube ./scripts/build-image.sh && ./scripts/deploy.sh
 ```
 
-Accès au service :
+Si la version de l'étape 1 est déjà déployée, il suffit d'installer Istio puis de relancer
+`./scripts/deploy.sh` : le pod est recréé avec son sidecar et le Service repasse en ClusterIP.
+
+Accès à l'application, **par la gateway Istio** :
 
 ```bash
-minikube service book-service -n bibliotheque --url          # affiche http://<ip>:30080
-BASE_URL=http://<ip>:30080 ./scripts/test.sh
-# ou, sur n'importe quel cluster :
-kubectl -n bibliotheque port-forward svc/book-service 8080:8080
-./scripts/test.sh
+# Le plus simple, sur n'importe quel cluster (laisser tourner dans un terminal) :
+kubectl -n istio-system port-forward svc/istio-ingressgateway 8080:80
+./scripts/test.sh                  # http://localhost:8080/api/books
+
+# Ou avec minikube tunnel (laisser tourner) : la gateway obtient une adresse externe
+minikube tunnel
+kubectl -n istio-system get svc istio-ingressgateway    # colonne EXTERNAL-IP (127.0.0.1 sous macOS/Windows)
+BASE_URL=http://<EXTERNAL-IP> ./scripts/test.sh
 ```
 
 Commandes utiles pour la démo :
 
 ```bash
-kubectl get all -n bibliotheque                       # Deployment, pod, Service
+kubectl get all -n bibliotheque                       # Deployment, pod 2/2 (app + istio-proxy), Service
+kubectl get gateway,virtualservice,destinationrule -n bibliotheque
+istioctl analyze -n bibliotheque                      # vérifie la configuration Istio
+curl -i http://localhost:8080/api/books | grep -i server          # server: istio-envoy
+kubectl logs -n bibliotheque -l app=book-service -c istio-proxy --tail=5   # logs d'accès Envoy
 kubectl describe deployment book-service -n bibliotheque
 kubectl logs -n bibliotheque -l app=book-service --tail=20
 kubectl delete pod -n bibliotheque -l app=book-service --wait=false   # Kubernetes recrée le pod
@@ -120,7 +164,17 @@ kubectl scale deployment book-service -n bibliotheque --replicas=3
 #      que dans la base en mémoire du pod qui a reçu la requête : d'où le besoin d'une vraie base.
 ```
 
-Nettoyage : `./scripts/nettoyage.sh`
+**Visualiser le mesh (facultatif)** : Kiali dessine le graphe des appels en temps réel.
+
+```bash
+kubectl apply -f istio-1.31.4/samples/addons/prometheus.yaml -f istio-1.31.4/samples/addons/kiali.yaml
+istioctl dashboard kiali      # puis générez du trafic avec ./scripts/test.sh
+```
+
+(Le dossier `istio-1.31.4/` est créé par `scripts/install-istio.sh` quand il télécharge istioctl ;
+sinon, prenez les fichiers dans votre propre téléchargement d'Istio.)
+
+Nettoyage : `./scripts/nettoyage.sh` (ajoutez `ISTIO=1` pour désinstaller aussi Istio)
 
 ---
 
@@ -133,7 +187,7 @@ Nettoyage : `./scripts/nettoyage.sh`
 | POST | `/api/books` | Création (champs validés) | 201, 400, 409 (ISBN déjà utilisé) |
 | PUT | `/api/books/{id}` | Modification | 200, 400, 404, 409 |
 | DELETE | `/api/books/{id}` | Suppression | 204, 404 |
-| GET | `/actuator/health` | Santé (utilisé par les sondes Kubernetes) | 200 |
+| GET | `/actuator/health` | Santé (sondes Kubernetes) ; non exposé par la gateway | 200 |
 
 Exemple :
 
@@ -162,10 +216,14 @@ Les erreurs suivent le format standard **Problem Details** (RFC 9457) :
 │   ├── src/test/                       Tests (service + API REST avec MockMvc)
 │   └── Dockerfile
 ├── k8s/                                Manifests Kubernetes (kubectl apply -k k8s/)
-│   ├── namespace.yaml
+│   ├── namespace.yaml                  Namespace avec injection Istio
 │   ├── book-service.yaml               Deployment + Service
+│   ├── istio/
+│   │   ├── istio-install.yaml          Configuration d'installation d'Istio
+│   │   ├── gateway.yaml                Gateway + VirtualService (routage)
+│   │   └── traffic.yaml                DestinationRule (répartition, circuit breaker)
 │   └── kustomization.yaml
-├── scripts/                            cluster-minikube, build-image, push-dockerhub, deploy, test, nettoyage
+├── scripts/                            cluster-minikube, install-istio, build-image, push-dockerhub, deploy, test, nettoyage
 └── .github/workflows/ci.yml            Tests + image Docker à chaque push
 ```
 
@@ -177,4 +235,4 @@ variables > Actions), l'image est aussi publiée sur le Docker Hub.
 
 ---
 
-Testé avec : Java 21, Spring Boot 4.1.2, Docker 29, Kubernetes 1.34.
+Testé avec : Java 21, Spring Boot 4.1.2, Docker 29, Kubernetes 1.34, Istio 1.31.4.

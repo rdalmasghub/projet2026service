@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Teste l'API REST de book-service de bout en bout.
-#   ./scripts/test.sh                                  # http://localhost:8080 (bootRun, docker run ou port-forward)
-#   BASE_URL=http://192.168.49.2:30080 ./scripts/test.sh   # adresse donnée par `minikube service`
+#   ./scripts/test.sh                          # http://localhost:8080 : port-forward de la gateway,
+#                                              # bootRun ou docker run
+#   BASE_URL=http://<EXTERNAL-IP> ./scripts/test.sh    # avec `minikube tunnel`
 set -uo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 CURL=(curl -s --max-time 15)
@@ -27,7 +28,14 @@ check "ISBN déjà utilisé -> 409"         409 "$(code -X POST -H 'Content-Type
 check "modification (3 exemplaires)"     3 "$("${CURL[@]}" -X PUT -H 'Content-Type: application/json' \
   -d "${body/\"totalCopies\":1/\"totalCopies\":3}" "$BASE_URL/api/books/$book_id" | json "d['availableCopies']")"
 check "suppression"                      204 "$(code -X DELETE "$BASE_URL/api/books/$book_id")"
-check "santé (Actuator)"                 UP "$("${CURL[@]}" "$BASE_URL/actuator/health" | json "d['status']")"
+
+# Derrière la gateway Istio, les réponses viennent du proxy Envoy et /actuator n'est pas exposé
+if "${CURL[@]}" -D - -o /dev/null "$BASE_URL/api/books" | grep -qi '^server: istio-envoy'; then
+  echo "  (requêtes passées par la gateway Istio)"
+  check "/actuator non exposé par la gateway"  404 "$(code "$BASE_URL/actuator/health")"
+else
+  check "santé (Actuator)"               UP "$("${CURL[@]}" "$BASE_URL/actuator/health" | json "d['status']")"
+fi
 
 echo
 echo "Pod qui a répondu (en-tête X-Served-By sur 6 appels) :"

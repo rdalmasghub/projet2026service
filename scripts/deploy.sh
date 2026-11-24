@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# Déploie book-service dans Kubernetes (namespace "bibliotheque") : Deployment + Service.
+# Déploie l'application dans Kubernetes (namespace "bibliotheque") :
+# Deployment + Service de book-service, Gateway et règles de routage Istio.
 #   DOCKERHUB_USER=monpseudo ./scripts/deploy.sh
+# Prérequis : Istio installé (./scripts/install-istio.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f .env ] && set -a && . ./.env && set +a
 
 DOCKERHUB_USER="${DOCKERHUB_USER:?Définissez DOCKERHUB_USER (votre pseudo Docker Hub) ou un fichier .env}"
 TAG="${TAG:-1.0.0}"
+
+if ! kubectl get crd gateways.networking.istio.io >/dev/null 2>&1; then
+  echo "Istio n'est pas installé dans ce cluster : lancez d'abord ./scripts/install-istio.sh" >&2
+  exit 1
+fi
 
 echo "==> Manifests (image : docker.io/$DOCKERHUB_USER/bibliotheque-book-service:$TAG)"
 kubectl kustomize k8s \
@@ -20,9 +27,8 @@ kubectl -n bibliotheque get deployment,pods,service -o wide
 
 cat <<'EOF'
 
-book-service est déployé. Pour l'appeler :
-  minikube : minikube service book-service -n bibliotheque --url
-  partout  : kubectl -n bibliotheque port-forward svc/book-service 8080:8080
-             puis http://localhost:8080/api/books
-Tests : ./scripts/test.sh
+Application déployée (pods 2/2 = book-service + proxy Istio). On y accède par la gateway Istio :
+  kubectl -n istio-system port-forward svc/istio-ingressgateway 8080:80
+  puis http://localhost:8080/api/books   et   ./scripts/test.sh
+(avec `minikube tunnel` : http://<EXTERNAL-IP de svc/istio-ingressgateway>/api/books)
 EOF
