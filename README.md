@@ -1,10 +1,11 @@
 # Bibliothèque : microservices sur Docker et Kubernetes
-
+Rémi Dalmas & Gonçalo DE SOUSA PIHNO 
+LSI2APP
 Projet 2026 : application de gestion d'une bibliothèque, construite étape par étape en suivant le sujet.
 
 | Étape du sujet | État |
 |---|---|
-| **1. Commencer par un seul service en local (10/20)** | ✅ cette version |
+| **1. Commencer par un seul service en local (10/20)** | cette version |
 | 2. Ajouter une gateway en local, via un service mesh (12/20) | à venir |
 | 3. Ajouter un deuxième service et les relier (14/20), option gRPC | à venir |
 | 4. Ajouter une base de données (16/20) | à venir |
